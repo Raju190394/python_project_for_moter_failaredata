@@ -48,6 +48,29 @@ The system utilizes standard Industrial Engineering and Reliability Engineering 
 *   **Exclude MAINTENANCE Cost:**
     $$\sum \text{Repairing Cost} \text{ where } \text{Department} \neq \text{'MAINTENANCE'}$$
 
+### D. AI/ML Predictive Analytics (NEW)
+
+The system employs machine learning algorithms to predict future equipment failures:
+
+*   **Risk Score Calculation:**
+    $$\text{Risk Score} = \frac{1}{3} \left( \frac{\text{Current Downtime}}{\text{Max Downtime}} + \frac{\text{Avg Downtime}}{\text{Max Avg}} + \frac{\text{Failure Frequency}}{10} \right) \times 100$$
+
+*   **Failure Interval Analysis:**
+    $$\text{Avg Interval} = \frac{1}{n-1} \sum_{i=1}^{n-1} (t_{i+1} - t_i)$$
+    *Where $t_i$ represents the record index of the $i^{th}$ failure.*
+
+*   **Next Failure Estimation:**
+    $$\text{Estimated Next Failure} = \text{Avg Interval} - (\text{Current Index} - \text{Last Failure Index})$$
+
+*   **Prediction Confidence:**
+    $$\text{Confidence} = \max\left(0, 100 - \frac{\sigma}{\mu} \times 100\right)$$
+    *Where $\sigma$ is the standard deviation and $\mu$ is the mean of failure intervals.*
+
+**ML Features:**
+- **Pattern Recognition:** Analyzes historical downtime trends using rolling averages
+- **Anomaly Detection:** Identifies unusual failure patterns
+- **Risk Classification:** Categorizes equipment health as Good (0-50), Warning (50-75), or Critical (75-100)
+
 ---
 
 ## 4. Operational Insights Produced
@@ -56,7 +79,12 @@ By applying these formulas, the dashboard generates the following insights:
 2.  **Pareto Analysis (Reasons):** Identification of the top 10 reasons causing most failures to prioritize maintenance efforts.
 3.  **Cross-Sheet Grand Totals:** A consolidated view of all expenses and reliability gaps across the entire facility (multiple sheets).
 4.  **Unit Consistency:** The ability to toggle results between **Minutes** and **Hours** for both operational and management-level reporting.
+5.  **AI-Powered Predictions (NEW):**
+   - **Risk Assessment:** Real-time equipment health scoring (0-100 scale)
+   - **Failure Forecasting:** Predictive estimates of when next breakdown will occur
+   - **Smart Alerts:** Automated warnings for high-risk equipment requiring preventive maintenance
+   - **Trend Analysis:** Visual representation of how equipment risk evolves over time
 
 ---
 
-**Conclusion:** This methodology ensures that the factory gets a mathematically sound, data-driven report that isolates actual breakdown costs and provides a clear roadmap for improving equipment uptime.
+**Conclusion:** This methodology ensures that the factory gets a mathematically sound, data-driven report that isolates actual breakdown costs, provides a clear roadmap for improving equipment uptime, and **proactively predicts future failures** to enable preventive maintenance strategies.

@@ -1,11 +1,12 @@
-# Industrial Reliability & Cost Analytics Dashboard
+# Industrial Reliability & Cost Analytics Dashboard with AI/ML
 
-A premium, high-performance analytics platform designed for industrial equipment monitoring. This tool calculates critical reliability metrics (MTTF, MTTR, Failure Rates) and provides a comprehensive financial overview of repair costs across multiple data sources.
+A premium, high-performance analytics platform designed for industrial equipment monitoring. This tool calculates critical reliability metrics (MTTF, MTTR, Failure Rates), provides comprehensive financial overview of repair costs, and uses **AI/ML** to predict future equipment failures.
 
 ---
 
 ## 🚀 Key Features
 
+### Core Analytics
 - **Reliability Metrics:** Automated calculation of:
   - **MTTF (Mean Time To Failure):** Average time before equipment fails.
   - **MTTR (Mean Time To Repair):** Average time taken to fix a failure.
@@ -19,6 +20,16 @@ A premium, high-performance analytics platform designed for industrial equipment
 - **Flexible Configuration:** Toggle between Minutes and Hours for all calculations.
 - **Automatic Data Cleaning:** Handles inconsistent column names and non-numeric data gracefully.
 
+### 🤖 AI/ML Predictive Analytics (NEW)
+- **Risk Score (0-100):** Real-time equipment health assessment based on:
+  - Recent downtime patterns
+  - Failure frequency trends
+  - Historical breakdown intervals
+- **Next Failure Prediction:** Estimates when the next equipment failure is likely to occur
+- **Confidence Metrics:** Shows prediction accuracy based on historical data consistency
+- **Smart Alerts:** Automatic warnings for high-risk equipment requiring immediate attention
+- **Risk Trend Visualization:** Interactive charts showing how equipment risk evolves over time
+
 ---
 
 ## 🛠️ Technology Stack
@@ -31,6 +42,7 @@ This project is built using modern Python-based data science and web technologie
 - **[Plotly](https://plotly.com/):** Interactive graphing library for the charts and visualizations.
 - **[Openpyxl](https://openpyxl.readthedocs.io/):** For engine-level reading of modern Excel (`.xlsx`) files.
 - **[NumPy](https://numpy.org/):** For efficient numerical calculations and handling of missing data.
+- **[Scikit-Learn](https://scikit-learn.org/):** Machine learning library for predictive analytics and risk assessment.
 
 ---
 

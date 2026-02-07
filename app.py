@@ -4,6 +4,18 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import LabelEncoder
+import warnings
+warnings.filterwarnings('ignore')
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage
+from reportlab.lib.units import inch
+from io import BytesIO
+import tempfile
+import os
 
 # Page Configuration
 st.set_page_config(
@@ -131,6 +143,7 @@ if uploaded_file:
         # Load data with skip rows
         df = pd.read_excel(uploaded_file, sheet_name=sheet_name, skiprows=skip_rows)
         
+        
         # Clean column names
         df.columns = [str(c).strip() for c in df.columns]
         
@@ -216,6 +229,23 @@ if uploaded_file:
         r2.metric(f"Total Repair Time ({unit_conv})", f"{total_repair_time:,.2f}")
         r3.metric(f"MTTR ({unit_conv})", f"{mttr:,.2f}")
         r4.metric("Repair Rate (μ)", f"{repair_rate:.6f}")
+
+
+        # Add PDF Button to Top Right Corner (after calculations)
+        # Note: PDF will be generated at the end after all charts are created
+        # Placeholder for now - actual PDF button will be added after all content is ready
+        
+        pdf_data_store = {
+            'num_failures': num_failures,
+            'total_op_time': total_op_time,
+            'mttf': mttf,
+            'failure_rate': failure_rate,
+            'num_repairs': num_repairs,
+            'total_repair_time': total_repair_time,
+            'mttr': mttr,
+            'repair_rate': repair_rate,
+            'unit_conv': unit_conv
+        }
 
         # Charts Section
         st.markdown("<h3 class='section-title'>📊 Visualization</h3>", unsafe_allow_html=True)
@@ -372,8 +402,405 @@ if uploaded_file:
         else:
             st.warning("Could not find cost data in sheets. Check your column selection.")
 
+        # --- ML PREDICTIVE ANALYTICS ---
+        st.markdown("<h3 class='section-title'>🤖 AI Predictive Analytics</h3>", unsafe_allow_html=True)
+        
+        if len(df) >= 10:  # Need minimum data for ML
+            try:
+                # Prepare features for ML
+                ml_df = df.copy()
+                ml_df['record_index'] = range(len(ml_df))
+                
+                # Feature engineering
+                ml_df['avg_downtime'] = ml_df[downtime_col].rolling(window=3, min_periods=1).mean()
+                ml_df['downtime_trend'] = ml_df[downtime_col].diff().fillna(0)
+                ml_df['failure_flag'] = (ml_df[downtime_col] > 0).astype(int)
+                
+                # Calculate failure frequency (failures per 10 records)
+                ml_df['failure_frequency'] = ml_df['failure_flag'].rolling(window=10, min_periods=1).sum()
+                
+                # Risk Score Calculation (0-100)
+                risk_factors = [
+                    ml_df[downtime_col] / ml_df[downtime_col].max() if ml_df[downtime_col].max() > 0 else 0,
+                    ml_df['avg_downtime'] / ml_df['avg_downtime'].max() if ml_df['avg_downtime'].max() > 0 else 0,
+                    ml_df['failure_frequency'] / 10  # Normalize to 0-1
+                ]
+                ml_df['risk_score'] = (sum(risk_factors) / len(risk_factors) * 100).clip(0, 100)
+                
+                # Current Risk Assessment
+                current_risk = ml_df['risk_score'].iloc[-1]
+                avg_risk = ml_df['risk_score'].mean()
+                recent_failures = ml_df['failure_flag'].tail(10).sum()
+                
+                # Display Risk Metrics
+                risk1, risk2, risk3 = st.columns(3)
+                risk1.metric("Current Risk Score", f"{current_risk:.1f}/100", 
+                           delta=f"{current_risk - avg_risk:.1f} vs avg",
+                           delta_color="inverse")
+                risk2.metric("Recent Failures (Last 10)", f"{recent_failures}")
+                risk3.metric("Failure Frequency", f"{(recent_failures/10)*100:.0f}%")
+                
+                # ML Prediction: Next Failure Time Estimation
+                if ml_df['failure_flag'].sum() >= 5:  # Need enough failure events
+                    # Get indices where failures occurred
+                    failure_indices = ml_df[ml_df['failure_flag'] == 1]['record_index'].values
+                    
+                    if len(failure_indices) > 1:
+                        # Calculate intervals between failures
+                        failure_intervals = np.diff(failure_indices)
+                        avg_interval = failure_intervals.mean()
+                        std_interval = failure_intervals.std()
+                        
+                        # Predict next failure
+                        last_failure_index = failure_indices[-1]
+                        current_index = len(ml_df) - 1
+                        records_since_failure = current_index - last_failure_index
+                        
+                        estimated_next_failure = max(0, avg_interval - records_since_failure)
+                        confidence = max(0, 100 - (std_interval / avg_interval * 100)) if avg_interval > 0 else 0
+                        
+                        st.markdown("##### 🔮 Next Failure Prediction")
+                        pred1, pred2 = st.columns(2)
+                        pred1.metric("Estimated Records Until Next Failure", 
+                                   f"{int(estimated_next_failure)} records")
+                        pred2.metric("Prediction Confidence", f"{confidence:.0f}%")
+                        
+                        # Warning if high risk
+                        if estimated_next_failure < 5 and current_risk > 60:
+                            st.warning("⚠️ **High Risk Alert:** Equipment is showing signs of imminent failure. Consider preventive maintenance.")
+                        elif current_risk > 75:
+                            st.error("🚨 **Critical Risk:** Immediate inspection recommended!")
+                        else:
+                            st.success("✅ Equipment operating within normal parameters.")
+                
+                # Risk Trend Visualization
+                fig_risk = go.Figure()
+                fig_risk.add_trace(go.Scatter(
+                    x=ml_df.index,
+                    y=ml_df['risk_score'],
+                    mode='lines',
+                    name='Risk Score',
+                    line=dict(color='#ef4444', width=2),
+                    fill='tozeroy',
+                    fillcolor='rgba(239, 68, 68, 0.1)'
+                ))
+                fig_risk.add_hline(y=avg_risk, line_dash="dash", 
+                                  line_color="gray", 
+                                  annotation_text=f"Average Risk: {avg_risk:.1f}")
+                fig_risk.update_layout(
+                    title="Risk Score Trend Over Time",
+                    xaxis_title="Record Index",
+                    yaxis_title="Risk Score (0-100)",
+                    height=350,
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                st.plotly_chart(fig_risk, use_container_width=True)
+                
+                # Key Insights
+                with st.expander("📊 ML Model Insights"):
+                    st.markdown(f"""
+                    **Model Analysis:**
+                    - **Total Records Analyzed:** {len(ml_df)}
+                    - **Total Failures Detected:** {ml_df['failure_flag'].sum()}
+                    - **Average Time Between Failures:** {avg_interval:.1f} records (if applicable)
+                    - **Current Equipment Health:** {'Critical' if current_risk > 75 else 'Warning' if current_risk > 50 else 'Good'}
+                    
+                    **Risk Factors Contributing to Score:**
+                    - Recent downtime patterns
+                    - Failure frequency trends
+                    - Historical breakdown intervals
+                    """)
+                    
+            except Exception as e:
+                st.info(f"ML Analysis requires more structured data. Error: {str(e)}")
+        else:
+            st.info("⚠️ ML Predictions require at least 10 records. Please upload more data for predictive analytics.")
+
         with st.expander("📄 View Current Sheet Processed Data"):
             st.dataframe(df)
+
+        # === EXPORT BUTTONS IN SIDEBAR ===
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 📥 Export Reports")
+        
+        # Excel Export
+        excel_buffer = BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+            # Summary Sheet
+            summary_export_data = {
+                'Metric': ['Total Failures', f'Total Operating Time ({unit_conv})', 
+                          f'MTTF ({unit_conv})', 'Failure Rate (λ)',
+                          'Total Repairs', f'Total Repair Time ({unit_conv})',
+                          f'MTTR ({unit_conv})', 'Repair Rate (μ)'],
+                'Value': [num_failures, f"{total_op_time:.2f}", f"{mttf:.2f}", f"{failure_rate:.6f}",
+                         num_repairs, f"{total_repair_time:.2f}", f"{mttr:.2f}", f"{repair_rate:.6f}"]
+            }
+            summary_df_export = pd.DataFrame(summary_export_data)
+            summary_df_export.to_excel(writer, sheet_name='Summary', index=False)
+            
+            # Raw Data Sheet
+            df.to_excel(writer, sheet_name='Raw Data', index=False)
+            
+        excel_buffer.seek(0)
+        st.sidebar.download_button(
+            label="📊 Download Excel Report",
+            data=excel_buffer,
+            file_name=f"reliability_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+        
+        # PDF Export
+        try:
+            pdf_buffer = BytesIO()
+            doc = SimpleDocTemplate(pdf_buffer, pagesize=A4, topMargin=0.5*inch, bottomMargin=0.5*inch)
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            # Custom Styles
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=20,
+                textColor=colors.HexColor('#1e3a8a'),
+                spaceAfter=6,
+                alignment=1  # Center
+            )
+            heading_style = ParagraphStyle(
+                'CustomHeading',
+                parent=styles['Heading2'],
+                fontSize=14,
+                textColor=colors.HexColor('#1e3a8a'),
+                spaceBefore=12,
+                spaceAfter=6
+            )
+            
+            # Title Page
+            elements.append(Paragraph("🏭 Equipment Reliability & Failure Analytics Report", title_style))
+            elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+            elements.append(Spacer(1, 0.2*inch))
+            
+            # 1. Failure Rate Analysis
+            elements.append(Paragraph("🛑 Failure Rate Analysis", heading_style))
+            failure_data = [
+                ['Metric', 'Value'],
+                ['Total Failures', f"{pdf_data_store['num_failures']:,}"],
+                [f"Total Operating Time ({pdf_data_store['unit_conv']})", f"{pdf_data_store['total_op_time']:,.2f}"],
+                [f"MTTF ({pdf_data_store['unit_conv']})", f"{pdf_data_store['mttf']:,.2f}"],
+                ['Failure Rate (λ)', f"{pdf_data_store['failure_rate']:.6f}"]
+            ]
+            failure_table = Table(failure_data, colWidths=[3.5*inch, 2*inch])
+            failure_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(failure_table)
+            elements.append(Spacer(1, 0.2*inch))
+            
+            # 2. Repair Rate Analysis
+            elements.append(Paragraph("🔧 Repair Rate Analysis", heading_style))
+            repair_data = [
+                ['Metric', 'Value'],
+                ['Total Repairs', f"{pdf_data_store['num_repairs']:,}"],
+                [f"Total Repair Time ({pdf_data_store['unit_conv']})", f"{pdf_data_store['total_repair_time']:,.2f}"],
+                [f"MTTR ({pdf_data_store['unit_conv']})", f"{pdf_data_store['mttr']:,.2f}"],
+                ['Repair Rate (μ)', f"{pdf_data_store['repair_rate']:.6f}"]
+            ]
+            repair_table = Table(repair_data, colWidths=[3.5*inch, 2*inch])
+            repair_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(repair_table)
+            elements.append(Spacer(1, 0.2*inch))
+            
+            # 3. Charts as Images
+            elements.append(Paragraph("📊 Visualizations", heading_style))
+            
+            # Save bar chart as image
+            temp_bar_path = os.path.join(tempfile.gettempdir(), f'bar_chart_{datetime.now().strftime("%Y%m%d%H%M%S")}.png')
+            try:
+                fig_bar.write_image(temp_bar_path, width=800, height=400, engine='kaleido')
+                elements.append(RLImage(temp_bar_path, width=5.5*inch, height=2.75*inch))
+                elements.append(Spacer(1, 0.1*inch))
+            except Exception as chart_err:
+                elements.append(Paragraph(f"Bar chart unavailable: {str(chart_err)[:50]}", styles['Normal']))
+            
+            # Save pie chart if exists
+            if reason_col_list:
+                temp_pie_path = os.path.join(tempfile.gettempdir(), f'pie_chart_{datetime.now().strftime("%Y%m%d%H%M%S")}.png')
+                try:
+                    fig_pie.write_image(temp_pie_path, width=800, height=500, engine='kaleido')
+                    elements.append(RLImage(temp_pie_path, width=5.5*inch, height=3.4*inch))
+                    elements.append(Spacer(1, 0.1*inch))
+                except Exception as pie_err:
+                    elements.append(Paragraph(f"Pie chart unavailable: {str(pie_err)[:50]}", styles['Normal']))
+            
+            # 4. Cost Summary (if available)
+            if summary_data:
+                elements.append(PageBreak())
+                elements.append(Paragraph("💰 Multi-Sheet Cost Summary", heading_style))
+                
+                cost_table_data = [['Sheet Name', 'All Repair Cost', 'Exclude MAINTENANCE', 'Status']]
+                grand_all = 0
+                grand_excl = 0
+                
+                for item in summary_data:
+                    cost_table_data.append([
+                        item['Sheet Name'],
+                        f"{item['All Repair Cost']:,.2f}",
+                        f"{item['Exclude MAINTENANCE']:,.2f}",
+                        item.get('Status', 'OK')
+                    ])
+                    if item['Sheet Name'] != '✨ GRAND TOTAL':
+                        grand_all += item['All Repair Cost']
+                        grand_excl += item['Exclude MAINTENANCE']
+                
+                # Add Grand Total Row
+                cost_table_data.append([
+                    '✨ GRAND TOTAL',
+                    f"{grand_all:,.2f}",
+                    f"{grand_excl:,.2f}",
+                    'SUMMARY'
+                ])
+                
+                cost_table = Table(cost_table_data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch, 1*inch])
+                cost_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -2), colors.beige),
+                    ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#fef3c7')),  # Highlight grand total
+                    ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                elements.append(cost_table)
+            
+            # 5. ML Predictions (if available)
+            if len(df) >= 10:
+                try:
+                    elements.append(PageBreak())
+                    elements.append(Paragraph("🤖 AI/ML Predictive Analytics", heading_style))
+                    
+                    # ML Data preparation
+                    ml_df_pdf = df.copy()
+                    ml_df_pdf['record_index'] = range(len(ml_df_pdf))
+                    ml_df_pdf['avg_downtime'] = ml_df_pdf[downtime_col].rolling(window=3, min_periods=1).mean()
+                    ml_df_pdf['downtime_trend'] = ml_df_pdf[downtime_col].diff().fillna(0)
+                    ml_df_pdf['failure_flag'] = (ml_df_pdf[downtime_col] > 0).astype(int)
+                    ml_df_pdf['failure_frequency'] = ml_df_pdf['failure_flag'].rolling(window=10, min_periods=1).sum()
+                    
+                    risk_factors_pdf = [
+                        ml_df_pdf[downtime_col] / ml_df_pdf[downtime_col].max() if ml_df_pdf[downtime_col].max() > 0 else 0,
+                        ml_df_pdf['avg_downtime'] / ml_df_pdf['avg_downtime'].max() if ml_df_pdf['avg_downtime'].max() > 0 else 0,
+                        ml_df_pdf['failure_frequency'] / 10
+                    ]
+                    ml_df_pdf['risk_score'] = (sum(risk_factors_pdf) / len(risk_factors_pdf) * 100).clip(0, 100)
+                    
+                    current_risk_pdf = ml_df_pdf['risk_score'].iloc[-1]
+                    avg_risk_pdf = ml_df_pdf['risk_score'].mean()
+                    recent_failures_pdf = ml_df_pdf['failure_flag'].tail(10).sum()
+                    
+                    ml_metrics_data = [
+                        ['Metric', 'Value'],
+                        ['Current Risk Score', f"{current_risk_pdf:.1f}/100"],
+                        ['Average Risk Score', f"{avg_risk_pdf:.1f}/100"],
+                        ['Recent Failures (Last 10)', f"{recent_failures_pdf}"],
+                        ['Failure Frequency', f"{(recent_failures_pdf/10)*100:.0f}%"],
+                        ['Equipment Health', 'Critical' if current_risk_pdf > 75 else 'Warning' if current_risk_pdf > 50 else 'Good']
+                    ]
+                    
+                    ml_table = Table(ml_metrics_data, colWidths=[3.5*inch, 2*inch])
+                    ml_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3b82f6')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 10),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                    ]))
+                    elements.append(ml_table)
+                    elements.append(Spacer(1, 0.1*inch))
+                    
+                    # Add risk trend chart (recreate it for PDF)
+                    try:
+                        # Create risk chart
+                        fig_risk_pdf = go.Figure()
+                        fig_risk_pdf.add_trace(go.Scatter(
+                            x=ml_df_pdf.index,
+                            y=ml_df_pdf['risk_score'],
+                            mode='lines',
+                            name='Risk Score',
+                            line=dict(color='#ef4444', width=2),
+                            fill='tozeroy',
+                            fillcolor='rgba(239, 68, 68, 0.1)'
+                        ))
+                        fig_risk_pdf.add_hline(y=avg_risk_pdf, line_dash="dash", 
+                                              line_color="gray", 
+                                              annotation_text=f"Average Risk: {avg_risk_pdf:.1f}")
+                        fig_risk_pdf.update_layout(
+                            title="Risk Score Trend Over Time",
+                            xaxis_title="Record Index",
+                            yaxis_title="Risk Score (0-100)",
+                            height=350,
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            margin=dict(l=20, r=20, t=50, b=20)
+                        )
+                        
+                        temp_risk_path = os.path.join(tempfile.gettempdir(), f'risk_chart_{datetime.now().strftime("%Y%m%d%H%M%S")}.png')
+                        fig_risk_pdf.write_image(temp_risk_path, width=800, height=350, engine='kaleido')
+                        elements.append(RLImage(temp_risk_path, width=5.5*inch, height=2.4*inch))
+                    except Exception as risk_err:
+                        elements.append(Paragraph(f"Risk chart unavailable: {str(risk_err)[:50]}", styles['Normal']))
+                        
+                except Exception as ml_err:
+                    elements.append(Paragraph(f"ML section unavailable: {str(ml_err)[:100]}", styles['Normal']))
+            
+            # Build PDF
+            doc.build(elements)
+            pdf_buffer.seek(0)
+            
+            # Cleanup temp files
+            cleanup_files = []
+            if 'temp_bar_path' in locals(): cleanup_files.append(temp_bar_path)
+            if 'temp_pie_path' in locals(): cleanup_files.append(temp_pie_path)
+            if 'temp_risk_path' in locals(): cleanup_files.append(temp_risk_path)
+            
+            for path in cleanup_files:
+                try:
+                    if os.path.exists(path):
+                        os.unlink(path)
+                except:
+                    pass
+            
+            st.sidebar.download_button(
+                label="📄 Download PDF Report",
+                data=pdf_buffer,
+                file_name=f"complete_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+        except Exception as e:
+            st.sidebar.error(f"PDF Error: {str(e)[:50]}...")
+            st.sidebar.info("Run: pip install kaleido")
 
     except Exception as e:
         st.error(f"Error: {e}")
