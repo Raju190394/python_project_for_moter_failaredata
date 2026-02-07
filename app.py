@@ -29,11 +29,21 @@ st.markdown("""
     /* Header Container */
     .main-header {
         background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%);
-        padding: 2rem;
-        border-radius: 15px;
+        padding: 1rem 2rem;
+        border-radius: 12px;
         color: white;
-        margin-bottom: 2rem;
+        margin-bottom: 1rem;
         box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+    .main-header h1 {
+        margin: 0 !important;
+        padding: 0 !important;
+        font-size: 1.75rem !important;
+    }
+    .main-header p {
+        margin: 0 !important;
+        padding: 0 !important;
+        opacity: 0.9;
     }
     
     /* Card Styling */
@@ -61,18 +71,25 @@ st.markdown("""
     .section-title {
         color: #1e3a8a;
         font-weight: 700;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
+        margin-top: 0.75rem !important;
+        margin-bottom: 0.5rem !important;
         border-left: 5px solid #3b82f6;
         padding-left: 10px;
+        font-size: 1.25rem !important;
     }
     
     div[data-testid="metric-container"] {
         background: #ffffff;
         border: 1px solid #e2e8f0;
-        padding: 15px;
-        border-radius: 10px;
+        padding: 8px 12px !important;
+        border-radius: 8px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        min-height: auto !important;
+    }
+
+    /* Reduce spacing between streamlit elements */
+    .element-container {
+        margin-bottom: 0.5rem !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -119,7 +136,7 @@ if uploaded_file:
         
         # UI for Column Selection
         st.markdown("<h3 class='section-title'>🔍 Data Configuration</h3>", unsafe_allow_html=True)
-        col_setup1, col_setup2 = st.columns(2)
+        col_setup1, col_setup2, col_setup3 = st.columns(3)
         
         with col_setup1:
             # Map downtime column - try to find "Equipment Downtime"
@@ -131,9 +148,16 @@ if uploaded_file:
             # Map repair time column
             repair_time_col = st.selectbox("Select Repair Time Column (Minutes)", df.columns, index=list(df.columns).index(downtime_col))
             
+        with col_setup3:
             # Map Department column for filtering
             dept_options = [c for c in df.columns if 'department' in str(c).lower()]
             dept_col = st.selectbox("Select Department Column", df.columns, index=list(df.columns).index(dept_options[0]) if dept_options else 0)
+
+        # Map Repairing Cost column (Global selection for summary)
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 💰 Cost Settings")
+        cost_options = [c for c in df.columns if 'cost' in str(c).lower()]
+        global_cost_col = st.sidebar.selectbox("Select 'Repairing Cost' Column", df.columns, index=list(df.columns).index(cost_options[0]) if cost_options else 0)
 
         # Prepare columns - convert to numeric and handle non-numeric values
         df[downtime_col] = pd.to_numeric(df[downtime_col], errors='coerce').fillna(0)
@@ -225,7 +249,6 @@ if uploaded_file:
         # 2. Reason Distribution
         reason_col_list = [c for c in df.columns if 'reason' in c.lower()]
         if reason_col_list:
-            st.markdown("<br>", unsafe_allow_html=True)
             reason_df = df[df[downtime_col] > 0][reason_col_list[0]].value_counts().reset_index()
             reason_df.columns = ['Reason', 'Count']
             
@@ -249,24 +272,124 @@ if uploaded_file:
         else:
             st.info("Add a 'Reason' column to see distribution chart.")
 
-        with st.expander("📄 View Processed Data Table"):
+        # --- MULTI-SHEET COST SUMMARY ---
+        st.markdown("<h3 class='section-title'>💰 Multi-Sheet Cost Summary</h3>", unsafe_allow_html=True)
+        
+        summary_data = []
+        # Create a normalized version of the target cost column for fuzzy matching
+        target_cost_norm = str(global_cost_col).strip().lower()
+
+        with st.spinner("Analyzing all sheets..."):
+            for s_name in sheet_names:
+                try:
+                    # Read each sheet
+                    temp_df = pd.read_excel(uploaded_file, sheet_name=s_name, skiprows=skip_rows)
+                    temp_df.columns = [str(c).strip() for c in temp_df.columns]
+                    
+                    # Find the best matching cost column in this specific sheet
+                    actual_cost_col = None
+                    # 1. Try exact match from sidebar selection
+                    if global_cost_col in temp_df.columns:
+                        actual_cost_col = global_cost_col
+                    else:
+                        # 2. Try normalized match (ignore case/extra spaces)
+                        for c in temp_df.columns:
+                            if c.lower().strip() == target_cost_norm:
+                                actual_cost_col = c
+                                break
+                        
+                        # 3. If still not found, search for any column containing 'cost'
+                        if not actual_cost_col:
+                            for c in temp_df.columns:
+                                if 'cost' in c.lower():
+                                    actual_cost_col = c
+                                    break
+                    
+                    all_cost = 0
+                    exclude_maint_cost = 0
+                    
+                    if actual_cost_col:
+                        temp_df[actual_cost_col] = pd.to_numeric(temp_df[actual_cost_col], errors='coerce').fillna(0)
+                        all_cost = temp_df[actual_cost_col].sum()
+                        
+                        # Find department column for this sheet (fuzzy search)
+                        actual_dept_col = None
+                        if dept_col in temp_df.columns:
+                            actual_dept_col = dept_col
+                        else:
+                            for c in temp_df.columns:
+                                if 'department' in c.lower() or 'dept' in c.lower():
+                                    actual_dept_col = c
+                                    break
+                        
+                        # Calculate excluded cost
+                        if actual_dept_col:
+                            mask = temp_df[actual_dept_col].astype(str).str.strip().str.upper() != 'MAINTENANCE'
+                            exclude_maint_cost = temp_df[mask][actual_cost_col].sum()
+                        else:
+                            exclude_maint_cost = all_cost
+                            
+                    summary_data.append({
+                        "Sheet Name": s_name,
+                        "All Repair Cost": round(all_cost, 2),
+                        "Exclude MAINTENANCE": round(exclude_maint_cost, 2),
+                        "Status": "✅ Success" if actual_cost_col else "⚠️ Cost Column Missing"
+                    })
+                except Exception as e:
+                    summary_data.append({
+                        "Sheet Name": s_name,
+                        "All Repair Cost": 0,
+                        "Exclude MAINTENANCE": 0,
+                        "Status": f"❌ Error: {str(e)[:30]}..."
+                    })
+
+        if summary_data:
+            summary_df = pd.DataFrame(summary_data)
+            
+            # Calculate Grand Totals
+            grand_all = summary_df["All Repair Cost"].sum()
+            grand_excl = summary_df["Exclude MAINTENANCE"].sum()
+            
+            # Display metrics for Grand Total
+            gt1, gt2 = st.columns(2)
+            gt1.metric("Grand Total (All Sheets)", f"{grand_all:,.2f}")
+            gt2.metric("Grand Total (Excl. Maintenance)", f"{grand_excl:,.2f}")
+            
+            # Add Grand Total Row to table
+            total_row = pd.DataFrame([{
+                "Sheet Name": "✨ GRAND TOTAL",
+                "All Repair Cost": grand_all,
+                "Exclude MAINTENANCE": grand_excl,
+                "Status": "SUMMARY"
+            }])
+            summary_display_df = pd.concat([summary_df, total_row], ignore_index=True)
+            
+            st.markdown("##### Detailed Sheet-wise Breakdown")
+            st.table(summary_display_df.style.format({
+                "All Repair Cost": "{:,.2f}",
+                "Exclude MAINTENANCE": "{:,.2f}"
+            }))
+        else:
+            st.warning("Could not find cost data in sheets. Check your column selection.")
+
+        with st.expander("📄 View Current Sheet Processed Data"):
             st.dataframe(df)
 
     except Exception as e:
         st.error(f"Error: {e}")
-        st.info("Sahi column names check karein. Aapne jo image dikhayi hai usme 'Equipment Downtime (Minutes)' column ka use karein.")
+        st.info("Please check the column names. Ensure you select the correct column from the dropdowns.")
 
 else:
     # Instructions
     st.markdown("""
     <div style='background: white; padding: 2rem; border-radius: 12px; border: 1px solid #e2e8f0;'>
-        <h3>👋 Suru karne ke liye excel upload karein</h3>
-        <p>Aapki file me ye columns hone chahiye:</p>
+        <h3>👋 Please upload an Excel file to get started</h3>
+        <p>Your file should ideally contain these columns:</p>
         <ul>
-            <li><b>Equipment Downtime (Minutes)</b> - Failure time calculation ke liye</li>
-            <li><b>Reason</b> (Optional) - Breakdown ka reason dekhne ke liye</li>
+            <li><b>Equipment Downtime (Minutes)</b> - Required for breakdown calculations</li>
+            <li><b>Reason</b> (Optional) - For failure reason distribution chart</li>
         </ul>
-        <p><i>Note: Hamne default me 24 hours (1440 min) observation period maana hai.</i></p>
+        <p><i>Note: By default, we use a 24-hour (1440 min) observation period per record.</i></p>
     </div>
     """, unsafe_allow_html=True)
 
